@@ -1,0 +1,227 @@
+-- === Peripherals ===
+local monitor = peripheral.wrap("right")
+local radar = peripheral.wrap("radar_38")
+
+-- === Auth ===
+local authorizedUsers = {
+  EmTheTurtle03 = true,
+  RadoslawGuzior = true,
+  HughJaynis1234 = true
+}
+
+-- === State ===
+local loggedInUser = nil
+local accountList = {}
+local selectedPlayer = nil
+local monitorW, monitorH = monitor.getSize()
+
+-- === Helpers ===
+local function getPlayerFile(player)
+  return "/accounts/" .. player .. ".txt"
+end
+
+local function getBalance(player)
+  local path = getPlayerFile(player)
+  if fs.exists(path) then
+    local f = fs.open(path, "r")
+    local val = tonumber(f.readAll())
+    f.close()
+    return val or 0
+  end
+  return 0
+end
+
+local function setBalance(player, amount)
+  local f = fs.open(getPlayerFile(player), "w")
+  f.write(tostring(amount))
+  f.close()
+end
+
+local function logTransaction(player, message, change)
+  if not fs.exists("/accounts/logs") then fs.makeDir("/accounts/logs") end
+  local logPath = "/accounts/logs/" .. player .. ".txt"
+  local time = textutils.formatTime(os.time(), true)
+  local date = textutils.formatTime(os.time(), false)
+  local newBalance = getBalance(player)
+  local delta = (change >= 0 and "+" or "") .. tostring(change)
+  local entry = string.format("[%s %s] %s %s (Balance: %s)", date, time, message, delta, newBalance)
+
+  local lines = {}
+  if fs.exists(logPath) then
+    local file = fs.open(logPath, "r")
+    while true do
+      local line = file.readLine()
+      if not line then break end
+      table.insert(lines, line)
+    end
+    file.close()
+  end
+
+  table.insert(lines, entry)
+  while #lines > 500 do table.remove(lines, 1) end
+
+  local file = fs.open(logPath, "w")
+  for _, line in ipairs(lines) do file.writeLine(line) end
+  file.close()
+end
+
+local function getLog(player, count)
+  local path = "/accounts/logs/" .. player .. ".txt"
+  if not fs.exists(path) then return {} end
+
+  local lines = {}
+  local file = fs.open(path, "r")
+  while true do
+    local line = file.readLine()
+    if not line then break end
+    table.insert(lines, line)
+  end
+  file.close()
+
+  local start = math.max(1, #lines - count + 1)
+  local result = {}
+  for i = start, #lines do
+    table.insert(result, lines[i])
+  end
+  return result
+end
+
+-- === UI ===
+local function clear()
+  monitor.setBackgroundColor(colors.black)
+  monitor.setTextColor(colors.white)
+  monitor.clear()
+end
+
+local function drawButton(x, y, label, color)
+  monitor.setCursorPos(x, y)
+  monitor.setBackgroundColor(color)
+  monitor.setTextColor(colors.black)
+  monitor.write(" " .. label .. " ")
+end
+
+local function drawMain()
+  clear()
+  monitor.setCursorPos(2, 1)
+  monitor.write("Select Account:")
+  for i = 1, math.min(#accountList, monitorH - 3) do
+    drawButton(2, i + 2, accountList[i], colors.gray)
+  end
+end
+
+local function drawAccountDetail(name)
+  clear()
+  local bal = getBalance(name)
+
+  monitor.setCursorPos(2, 1)
+  monitor.write("Account: " .. name)
+  monitor.setCursorPos(2, 2)
+  monitor.write("Balance: $" .. bal)
+
+  drawButton(2, 4, "Edit Balance", colors.lime)
+  drawButton(18, 4, "View Logs", colors.orange)
+  drawButton(2, 6, "< Back", colors.red)
+end
+
+local function drawLogView(name)
+  clear()
+  monitor.setCursorPos(2, 1)
+  monitor.write("Logs for: " .. name)
+  local logs = getLog(name, monitorH - 3)
+  for i, line in ipairs(logs) do
+    monitor.setCursorPos(2, i + 1)
+    monitor.write(line:sub(1, monitorW - 2))
+  end
+  drawButton(2, monitorH, "< Back", colors.red)
+end
+
+local function promptNewBalance(name)
+  term.redirect(monitor)
+  clear()
+  monitor.setCursorPos(2, 1)
+  monitor.write("Enter new balance for " .. name .. ":")
+  monitor.setCursorPos(2, 2)
+  monitor.setBackgroundColor(colors.white)
+  monitor.setTextColor(colors.black)
+  local input = read()
+  term.restore()
+
+  local newVal = tonumber(input)
+  if newVal then
+    local old = getBalance(name)
+    local delta = newVal - old
+    setBalance(name, newVal)
+    logTransaction(name, "ADMIN SET BALANCE", delta)
+  end
+end
+
+-- === State ===
+local currentScreen = "login" -- or "main", "detail", "logs"
+
+-- === Logic ===
+local function listAccounts()
+  accountList = {}
+  for _, name in ipairs(fs.list("/accounts")) do
+    if name:match("%.txt$") and not name:match("logs") then
+      table.insert(accountList, name:gsub("%.txt$", ""))
+    end
+  end
+  table.sort(accountList)
+end
+
+local function waitForAdmin()
+  while true do
+    local players = radar.getPlayers()
+    for _, p in ipairs(players) do
+      if authorizedUsers[p.name] then
+        loggedInUser = p.name
+        return
+      end
+    end
+    sleep(0.5)
+  end
+end
+
+-- === Touch Events ===
+local function handleTouch()
+  while true do
+    local _, _, x, y = os.pullEvent("monitor_touch")
+    if currentScreen == "main" then
+      local index = y - 2
+      if accountList[index] then
+        selectedPlayer = accountList[index]
+        currentScreen = "detail"
+        drawAccountDetail(selectedPlayer)
+      end
+    elseif currentScreen == "detail" then
+      if y == 4 and x >= 2 and x <= 14 then
+        promptNewBalance(selectedPlayer)
+        drawAccountDetail(selectedPlayer)
+      elseif y == 4 and x >= 18 then
+        currentScreen = "logs"
+        drawLogView(selectedPlayer)
+      elseif y == 6 then
+        currentScreen = "main"
+        drawMain()
+      end
+    elseif currentScreen == "logs" then
+      if y == monitorH then
+        currentScreen = "detail"
+        drawAccountDetail(selectedPlayer)
+      end
+    end
+  end
+end
+
+-- === Startup ===
+clear()
+monitor.setTextScale(1)
+monitor.setCursorPos(2, 2)
+monitor.write("Waiting for Admin Login...")
+waitForAdmin()
+
+listAccounts()
+drawMain()
+currentScreen = "main"
+
+parallel.waitForAny(handleTouch)
