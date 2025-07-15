@@ -1,0 +1,236 @@
+-- === Admin Casino Panel with Rednet ===
+
+-- === CONFIG ===
+local radar = peripheral.wrap("radar_16")
+local monitor = peripheral.wrap("top")
+local modem = peripheral.wrap("bottom")
+local ADMIN_LIST = {"AdminName1", "AdminName2"}  -- Replace with your admin usernames
+
+if not modem then error("No modem on bottom") end
+rednet.open("bottom")
+
+-- === STATE ===
+local isAdmin = false
+local currentAdmin = nil
+local players = {}
+local selectedPlayer = nil
+local playerBalance = 0
+local playerLogs = {}
+local logScroll = 0
+local editAmount = ""
+local infoMsg = ""
+
+-- === UTILS ===
+local function isAuthorized(name)
+    for _, admin in ipairs(ADMIN_LIST) do
+        if name == admin then return true end
+    end
+    return false
+end
+
+local function drawMenu()
+    monitor.setTextScale(1)
+    monitor.setBackgroundColor(colors.black)
+    monitor.setTextColor(colors.white)
+    monitor.clear()
+
+    if not isAdmin then
+        monitor.setCursorPos(10, 10)
+        monitor.write("No admin nearby")
+        return
+    end
+
+    monitor.setCursorPos(5, 2)
+    monitor.setTextColor(colors.yellow)
+    monitor.write("Casino Admin Panel")
+
+    monitor.setTextColor(colors.white)
+    monitor.setCursorPos(5, 4)
+    monitor.write("Accounts:")
+
+    for i, name in ipairs(players) do
+        monitor.setCursorPos(5, 5 + i)
+        if name == selectedPlayer then
+            monitor.setTextColor(colors.lime)
+        else
+            monitor.setTextColor(colors.white)
+        end
+        monitor.write("- " .. name)
+    end
+
+    if selectedPlayer then
+        monitor.setCursorPos(25, 4)
+        monitor.setTextColor(colors.cyan)
+        monitor.write("Selected: " .. selectedPlayer)
+
+        monitor.setCursorPos(25, 5)
+        monitor.setTextColor(colors.white)
+        monitor.write("Balance: $" .. tostring(playerBalance))
+
+        monitor.setCursorPos(25, 6)
+        monitor.write("Change Balance:")
+        monitor.setCursorPos(25, 7)
+        monitor.write("[" .. editAmount .. "]")
+        monitor.setCursorPos(25, 8)
+        monitor.setBackgroundColor(colors.green)
+        monitor.setTextColor(colors.black)
+        monitor.write("[ Save Edit ]")
+        monitor.setBackgroundColor(colors.black)
+        monitor.setTextColor(colors.white)
+
+        monitor.setCursorPos(25, 10)
+        monitor.write("Logs:")
+        local maxLines = 10
+        for i = 1, maxLines do
+            local idx = i + logScroll
+            local logLine = playerLogs[idx]
+            if logLine then
+                monitor.setCursorPos(25, 10 + i)
+                monitor.write(logLine:sub(1, 30))
+            end
+        end
+        monitor.setCursorPos(25, 21)
+        monitor.write("[ Scroll Up ]  [ Scroll Down ]")
+        monitor.setCursorPos(25, 23)
+        monitor.setTextColor(colors.red)
+        monitor.write("[ Back ]")
+        monitor.setTextColor(colors.white)
+    end
+
+    if infoMsg ~= "" then
+        monitor.setCursorPos(5, 23)
+        monitor.setTextColor(colors.yellow)
+        monitor.write(infoMsg)
+    end
+end
+
+local function requestPlayers()
+    rednet.broadcast({action = "get_Players"}, "casino")
+end
+
+local function requestBalance(player)
+    rednet.broadcast({action = "get_balance", player = player}, "casino")
+end
+
+local function requestLogs(player)
+    rednet.broadcast({action = "get_logs", player = player}, "casino")
+end
+
+local function sendEdit(player, delta)
+    rednet.broadcast({action = "transfer", player = player, delta = delta, note = "Admin Edit"}, "casino")
+end
+
+-- === Radar Loop ===
+local function radarLoop()
+    while true do
+        local players = radar.getPlayers()
+        local found = nil
+        for _, p in ipairs(players) do
+            if p.distance <= 3 and isAuthorized(p.name) then
+                found = p.name
+                break
+            end
+        end
+        if found then
+            isAdmin = true
+            currentAdmin = found
+        else
+            isAdmin = false
+            currentAdmin = nil
+            selectedPlayer = nil
+            editAmount = ""
+            infoMsg = ""
+        end
+        sleep(0.5)
+    end
+end
+
+-- === Rednet Response Listener ===
+local function rednetLoop()
+    while true do
+        local sender, msg, proto = rednet.receive("casino")
+        if type(msg) == "table" then
+            if msg.action == "players_list" and msg.players then
+                players = msg.players
+            elseif msg.player == selectedPlayer and msg.balance then
+                playerBalance = msg.balance
+            elseif msg.player == selectedPlayer and msg.logs then
+                playerLogs = msg.logs
+            end
+        end
+    end
+end
+
+-- === Touch Handler ===
+local function handleTouch()
+    while true do
+        local _, _, x, y = os.pullEvent("monitor_touch")
+
+        if not isAdmin then return end
+
+        if selectedPlayer then
+            if y == 8 and x >= 25 and x <= 37 then
+                local val = tonumber(editAmount)
+                if val then
+                    sendEdit(selectedPlayer, val)
+                    infoMsg = "Balance edited by $" .. val
+                    sleep(0.5)
+                    requestBalance(selectedPlayer)
+                    requestLogs(selectedPlayer)
+                else
+                    infoMsg = "Invalid number."
+                end
+            elseif y == 21 and x >= 25 and x <= 37 then
+                logScroll = math.max(0, logScroll - 1)
+            elseif y == 21 and x >= 42 and x <= 55 then
+                logScroll = math.min(#playerLogs - 10, logScroll + 1)
+            elseif y == 23 and x >= 25 and x <= 35 then
+                selectedPlayer = nil
+                editAmount = ""
+                playerLogs = {}
+                logScroll = 0
+            end
+        else
+            for i, name in ipairs(players) do
+                if y == 5 + i then
+                    selectedPlayer = name
+                    playerLogs = {}
+                    logScroll = 0
+                    editAmount = ""
+                    requestBalance(name)
+                    requestLogs(name)
+                end
+            end
+        end
+        sleep(0.1)
+    end
+end
+
+-- === Key Input Handler ===
+local function keyInput()
+    while true do
+        if selectedPlayer then
+            local ev, ch = os.pullEvent("char")
+            if ch == "\b" then
+                editAmount = editAmount:sub(1, -2)
+            elseif ch:match("[%d-]") then
+                editAmount = editAmount .. ch
+            end
+        else
+            sleep(0.1)
+        end
+    end
+end
+
+-- === UI Refresh ===
+local function drawLoop()
+    while true do
+        drawMenu()
+        sleep(0.1)
+    end
+end
+
+-- === INIT ===
+requestPlayers()
+
+parallel.waitForAny(radarLoop, rednetLoop, drawLoop, handleTouch, keyInput)
