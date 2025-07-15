@@ -1,0 +1,230 @@
+-- === INIT ===
+rednet.open("front")
+pcall(function() rednet.open("back") end)
+ 
+local ni = peripheral.find("neuralInterface")
+if not ni then error("Neural Interface not found") end
+ 
+local modem = peripheral.wrap("front")
+local canvas = ni.canvas()
+canvas.clear()
+ 
+-- === CONFIGURATION ===
+local whitelist = {
+    ["HughJaynis1234"] = true, ["Friend1"] = true, ["Friend2"] = true,
+    ["Mista Fista"] = true, ["Flag"] = true, ["Iron Golem"] = true,
+    ["RadoslawGuzior"] = true, ["Glass Item Frame"] = true,
+    ["Mr Fister"] = true, ["EmTheTurtle03"] = true,
+    ["Cow"] = true, ["Chicken"] = true, ["Pig"] = true, ["Sheep"] = true,
+    ["Villager"] = true, ["Bat"] = true, ["Horse"] = true, ["Ocelot"] = true,
+    ["Wolf"] = true, ["Cat"] = true, ["Mooshroom"] = true, ["Rabbit"] = true,
+    ["Parrot"] = true, ["Squid"] = true, ["Turtle"] = true, ["Dolphin"] = true,
+    ["Fox"] = true, ["Pufferfish"] = true, ["Salmon"] = true,
+    ["Tropical Fish"] = true, ["Trader Llama"] = true, ["Wandering Trader"] = true,
+}
+ 
+local prefixWhitelist = {"Shop_", "Bot_", "ItemFrame", "item", "XPO", "Item"}
+local prefixBlacklist = {
+    "Bat", "Chicken", "Villager", "Cat", "Dog", "Pig", "Sheep", "Cow", "Llama", "Rabbit",
+    "Creeper", "Skeleton", "Spider", "Cave Spider", "Zombie", "Husk", "Glass", "Item", "item",
+    "Painting", "painting", "Flag", "gcflag", "flag", "quark", "Armor", "armor",
+    "quark:glass_item_frame"
+}
+ 
+local ACCOUNT_ID = 8166
+ 
+-- === UI ELEMENTS ===
+local emcItemCountText = canvas.addText({10, 52}, "")
+emcItemCountText.setScale(1)
+emcItemCountText.setColor(0xFFFFFF)
+ 
+local emcTotalText = canvas.addText({10, 62}, "")
+emcTotalText.setScale(1)
+emcTotalText.setColor(0x00FFAA)
+ 
+local timeText = canvas.addText({10, 22}, "")
+timeText.setScale(1.5)
+timeText.setColor(0x80DFFF)
+ 
+local entityText = canvas.addText({10, 33.5}, "")
+entityText.setScale(1)
+entityText.setColor(0xFF00BF)
+ 
+local caveCrystalLabel = canvas.addText({10, 42.5}, "")
+caveCrystalLabel.setScale(1)
+caveCrystalLabel.setColor(0xD8BFD8)
+ 
+local balanceText = canvas.addText({10, 71}, "")
+balanceText.setScale(.9)
+balanceText.setColor(0xFFC0CB)
+ 
+-- === HELPERS ===
+local function isWhitelisted(name)
+    if whitelist[name] then return true end
+    for _, prefix in ipairs(prefixWhitelist) do
+        if name:sub(1, #prefix) == prefix then return true end
+    end
+    return false
+end
+ 
+local function isBlacklistedByPrefix(name)
+    for _, prefix in ipairs(prefixBlacklist) do
+        if name:sub(1, #prefix) == prefix then return true end
+    end
+    return false
+end
+ 
+local function formatBalance(n)
+    if n >= 1e12 then return string.format("$%.1fT", n / 1e12)
+    elseif n >= 1e9 then return string.format("$%.1fB", n / 1e9)
+    elseif n >= 1e6 then return string.format("$%.1fM", n / 1e6)
+    else return "$" .. tostring(n) end
+end
+ 
+-- === CAVE CRYSTAL SCAN ===
+local function checkCaveCrystals()
+    if not ni.hasModule("plethora:scanner") then
+        caveCrystalLabel.setText("Scanner not found")
+        return
+    end
+ 
+    local blocks = ni.scan(16)
+    local foundCrystals = {}
+ 
+    for _, block in ipairs(blocks) do
+        local name = block.name:lower()
+        if name:find("quark") and name:find("crystal") then
+            table.insert(foundCrystals, block.name .. string.format(" (%d, %d, %d)", block.x, block.y, block.z))
+        end
+    end
+ 
+    if #foundCrystals > 0 then
+        caveCrystalLabel.setText("Cave Crystals:\n" .. table.concat(foundCrystals, "\n"))
+    else
+        caveCrystalLabel.setText("No Cave Crystals Nearby")
+    end
+end
+ 
+-- === STOCK STATS ===
+local emcStatsVisible = false
+ 
+local function requestInventoryStats()
+    rednet.send(8290, {request = "inventory_count"})
+    local senderID, message = rednet.receive(2)
+    if senderID == 8290 and type(message) == "table" and message.response == "inventory_count" then
+        emcItemCountText.setText("Stock Items: " .. message.count)
+        emcTotalText.setText("Total EMC: " .. message.totalEMC)
+    else
+        emcItemCountText.setText("Inventory data unavailable.")
+        emcTotalText.setText("")
+    end
+end
+ 
+local function stockStatsKeyListener()
+    local buffer = ""
+    while true do
+        local _, char = os.pullEvent("char")
+        buffer = buffer .. char:lower()
+        if #buffer > 10 then buffer = buffer:sub(-10) end
+        if buffer:sub(-3) == "p33" then
+            emcStatsVisible = not emcStatsVisible
+            if not emcStatsVisible then
+                emcItemCountText.setText("")
+                emcTotalText.setText("")
+            end
+        end
+    end
+end
+ 
+local function stockStatsUpdater()
+    while true do
+        if emcStatsVisible then requestInventoryStats() end
+        sleep(1)
+    end
+end
+ 
+-- === BALANCE DISPLAY ===
+local lastBalances = {}
+local showBalances = false
+ 
+local function listenForBalances()
+    while true do
+        local sender, msg = rednet.receive()
+        if type(msg) == "table" and msg.action == "top_balances" and type(msg.entries) == "table" then
+            local sorted = {}
+            for _, entry in ipairs(msg.entries) do
+                local bal = tonumber(entry.balance) or 0
+                if bal >= 0 then
+                    table.insert(sorted, {name = entry.name, balance = bal})
+                end
+            end
+ 
+            table.sort(sorted, function(a, b) return a.balance > b.balance end)
+            lastBalances = sorted
+ 
+            if showBalances then
+                local display = "Top Balances:\n"
+                for i, entry in ipairs(sorted) do
+                    local line = i .. ") " .. entry.name .. ": " .. formatBalance(entry.balance) .. "\n"
+                    if #display + #line > 512 then break end
+                    display = display .. line
+                end
+                balanceText.setText(display)
+            end
+        end
+    end
+end
+ 
+local function keyboardSequenceListener()
+    local buffer = ""
+    while true do
+        local _, char = os.pullEvent("char")
+        buffer = buffer .. char:lower()
+        if #buffer > 10 then buffer = buffer:sub(-10) end
+        if buffer:sub(-5) == "boobs" then
+            showBalances = not showBalances
+            if showBalances then
+                rednet.send(ACCOUNT_ID, {action = "get_balance", player = "Hugh"})
+                balanceText.setText("Requesting balances...")
+            else
+                balanceText.setText("")
+            end
+            buffer = ""
+        end
+    end
+end
+ 
+-- === MAIN LOOP ===
+local function mainLoop()
+    while true do
+        local entities = ni.sense(1000)
+        local nearEntities = {}
+ 
+        for _, entity in ipairs(entities) do
+            local name = entity.displayName or "Unknown"
+            if not isBlacklistedByPrefix(name) then
+                table.insert(nearEntities, name)
+            end
+        end
+ 
+        timeText.setText("EST: " .. textutils.formatTime((os.time("utc") + 8) % 12, true))
+ 
+        local entityList = table.concat(nearEntities, ", ")
+        if #entityList > 80 then
+            entityList = entityList:sub(1, 77) .. "..."
+        end
+        entityText.setText("Nearby: " .. entityList)
+ 
+        checkCaveCrystals()
+        sleep(3)
+    end
+end
+ 
+-- === RUN EVERYTHING ===
+parallel.waitForAny(
+    stockStatsKeyListener,
+    stockStatsUpdater,
+    mainLoop,
+    keyboardSequenceListener,
+    listenForBalances
+)
