@@ -1,0 +1,203 @@
+-- Casino Admin Panel v2
+local monitor = peripheral.wrap("top")
+local radar = peripheral.wrap("left")
+local modem = peripheral.wrap("bottom")
+
+rednet.open("bottom")
+
+-- CONFIGURATION
+local ADMIN_WHITELIST = {
+    ["AdminName1"] = true,
+    ["AdminName2"] = true
+}
+
+-- STATE
+local currentScreen = "account_list"
+local selectedAccount = nil
+local scrollOffset = 0
+local logScroll = 0
+local logs = {}
+local editBalance = 0
+
+-- HELPERS
+
+local function getBalance(player)
+    local path = "/accounts/" .. player .. ".txt"
+    if not fs.exists(path) then return 0 end
+    local file = fs.open(path, "r")
+    local bal = tonumber(file.readLine())
+    file.close()
+    return bal or 0
+end
+
+local function setBalance(player, amount)
+    local path = "/accounts/" .. player .. ".txt"
+    local file = fs.open(path, "w")
+    file.writeLine(tostring(amount))
+    file.close()
+end
+
+local function logTransaction(player, type, amount)
+    local logPath = "/accounts/logs/" .. player .. ".txt"
+    fs.makeDir("/accounts/logs/")
+    local logFile = fs.open(logPath, "a")
+    local timestamp = textutils.formatTime(os.time(), true)
+    logFile.writeLine("[" .. timestamp .. "] " .. type .. ": " .. tostring(amount))
+    logFile.close()
+end
+
+local function readLogs(player)
+    local path = "/accounts/logs/" .. player .. ".txt"
+    local entries = {}
+    if fs.exists(path) then
+        local file = fs.open(path, "r")
+        while true do
+            local line = file.readLine()
+            if not line then break end
+            table.insert(entries, line)
+        end
+        file.close()
+    end
+    return entries
+end
+
+local function isAdminNearby()
+    local players = radar.getPlayers()
+    for _, p in ipairs(players) do
+        if ADMIN_WHITELIST[p.name] and p.distance <= 2 then
+            return p.name
+        end
+    end
+    return nil
+end
+
+-- UI DRAWING
+
+local function drawAccountList()
+    monitor.clear()
+    monitor.setCursorPos(1,1)
+    monitor.write("== Casino Admin Panel ==")
+
+    local files = fs.list("/accounts")
+    local y = 3
+    for i = 1 + scrollOffset, math.min(#files, scrollOffset + 10) do
+        local acc = files[i]
+        if acc:match("%.txt$") and not acc:match("logs") then
+            acc = acc:gsub("%.txt$", "")
+            monitor.setCursorPos(3, y)
+            monitor.write("- " .. acc)
+            y = y + 1
+        end
+    end
+end
+
+local function drawAccountDetail()
+    monitor.clear()
+    monitor.setCursorPos(1,1)
+    monitor.write("== Account: " .. selectedAccount .. " ==")
+
+    monitor.setCursorPos(2,3)
+    monitor.write("Balance: $" .. editBalance)
+
+    monitor.setCursorPos(2,4)
+    monitor.write("[ +100 ]  [ -100 ]  [ Edit ]")
+
+    monitor.setCursorPos(2,6)
+    monitor.write("[ Save ]   [ Back ]")
+
+    monitor.setCursorPos(2,8)
+    monitor.write("Logs:")
+
+    monitor.setCursorPos(2,9)
+    monitor.write("[↑]   [↓]")
+
+    for i = 1, 10 do
+        local idx = #logs - logScroll - i + 1
+        if logs[idx] then
+            monitor.setCursorPos(2, 9 + i)
+            monitor.write(logs[idx]:sub(1, 32))
+        end
+    end
+end
+
+local function handleTouch(x, y)
+    if currentScreen == "account_list" then
+        local index = y - 3 + scrollOffset
+        local files = fs.list("/accounts")
+        local name = files[index]
+        if name and name:match("%.txt$") and not name:match("logs") then
+            selectedAccount = name:gsub("%.txt$", "")
+            currentScreen = "account_detail"
+            editBalance = getBalance(selectedAccount)
+            logs = readLogs(selectedAccount)
+            logScroll = 0
+        end
+
+    elseif currentScreen == "account_detail" then
+        if y == 4 then
+            if x >= 3 and x <= 9 then
+                editBalance = editBalance + 100
+            elseif x >= 13 and x <= 19 then
+                editBalance = math.max(0, editBalance - 100)
+            elseif x >= 23 and x <= 30 then
+                -- Manual Edit Input
+                term.redirect(peripheral.find("monitor"))
+                term.setCursorPos(2, 15)
+                term.write("Enter amount:       ")
+                term.setCursorPos(18, 15)
+                local input = read()
+                local num = tonumber(input)
+                if num then
+                    editBalance = math.max(0, math.floor(num))
+                end
+                term.redirect(term.native())
+            end
+        elseif y == 6 then
+            if x >= 3 and x <= 9 then
+                setBalance(selectedAccount, editBalance)
+                logTransaction(selectedAccount, "ADMIN SET", editBalance)
+                currentScreen = "account_list"
+            elseif x >= 14 and x <= 20 then
+                currentScreen = "account_list"
+            end
+        elseif y == 9 then
+            if x >= 3 and x <= 5 and logScroll + 10 < #logs then
+                logScroll = logScroll + 1
+            elseif x >= 9 and x <= 11 and logScroll > 0 then
+                logScroll = logScroll - 1
+            end
+        end
+    end
+end
+
+-- MAIN LOOPS
+
+local function uiLoop()
+    while true do
+        if isAdminNearby() then
+            if currentScreen == "account_list" then
+                drawAccountList()
+            elseif currentScreen == "account_detail" then
+                drawAccountDetail()
+            end
+        else
+            monitor.clear()
+            monitor.setCursorPos(5, 5)
+            monitor.write("Access Denied")
+            monitor.setCursorPos(5, 6)
+            monitor.write("No Admin Nearby")
+        end
+        sleep(0.1)
+    end
+end
+
+local function touchLoop()
+    while true do
+        local _, _, x, y = os.pullEvent("monitor_touch")
+        if isAdminNearby() then
+            handleTouch(x, y)
+        end
+    end
+end
+
+parallel.waitForAny(uiLoop, touchLoop)
