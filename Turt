@@ -1,0 +1,148 @@
+-- bedrock_miner_safe.lua
+
+-- CONFIG
+local fuelSlot = 1
+local placeableSlot = 2  -- Reserved for safe blocks to plug lava
+local trashBlocks = {
+    ["minecraft:cobblestone"] = true,
+    ["minecraft:dirt"] = true,
+    ["minecraft:stone"] = true,
+    ["minecraft:granite"] = true,
+    ["minecraft:diorite"] = true
+}
+
+-- Move down safely
+function safeDown()
+    local success, data = turtle.inspectDown()
+    if success and data.name == "minecraft:lava" then
+        print("Lava detected! Attempting to block...")
+        turtle.select(placeableSlot)
+        if turtle.placeDown() then
+            print("Lava blocked.")
+            sleep(0.5)
+        else
+            print("Failed to block lava. Aborting.")
+            return false
+        end
+    end
+
+    -- Keep trying to clear debris below
+    while turtle.detectDown() do
+        turtle.digDown()
+        sleep(0.5)
+    end
+    return turtle.down()
+end
+
+-- Refuel from back chest
+function refuelFromChest()
+    turtle.select(fuelSlot)
+    turtle.turnLeft()
+    turtle.turnLeft()
+    if turtle.suck(64) then
+        turtle.refuel()
+    end
+    turtle.turnLeft()
+    turtle.turnLeft()
+end
+
+-- Drop items to front chest
+function offloadItems()
+    for i = 3, 16 do
+        turtle.select(i)
+        if turtle.getItemCount(i) > 0 then
+            turtle.drop()
+        end
+    end
+end
+
+-- Check and drop trash blocks
+function dropTrash()
+    for i = 3, 16 do
+        turtle.select(i)
+        local item = turtle.getItemDetail()
+        if item and trashBlocks[item.name] then
+            turtle.drop()
+        end
+    end
+end
+
+-- Check inventory full
+function isInventoryFull()
+    for i = 3, 16 do
+        if turtle.getItemCount(i) == 0 then
+            return false
+        end
+    end
+    return true
+end
+
+-- Return to surface
+function returnToSurface(depth)
+    for i = 1, depth do
+        turtle.up()
+    end
+end
+
+-- Go back down to depth
+function returnToDepth(depth)
+    for i = 1, depth do
+        if not safeDown() then
+            print("Failed to return to depth (lava?).")
+            return false
+        end
+    end
+    return true
+end
+
+-- Main Loop
+function mineToBedrock()
+    local depth = 0
+
+    while true do
+        -- Dig and move down
+        if not safeDown() then
+            print("Stopping due to unsafe conditions.")
+            returnToSurface(depth)
+            offloadItems()
+            break
+        end
+        depth = depth + 1
+
+        -- Mine block ahead (just in case)
+        if turtle.detect() then
+            turtle.dig()
+        end
+
+        -- Remove trash
+        dropTrash()
+
+        -- Fuel check
+        if turtle.getFuelLevel() < 50 then
+            print("Low fuel, refueling...")
+            returnToSurface(depth)
+            refuelFromChest()
+            offloadItems()
+            if not returnToDepth(depth) then break end
+        elseif isInventoryFull() then
+            print("Inventory full, unloading...")
+            returnToSurface(depth)
+            offloadItems()
+            if not returnToDepth(depth) then break end
+        end
+
+        -- Stop on bedrock
+        local success, data = turtle.inspectDown()
+        if success and data.name == "minecraft:bedrock" then
+            print("Bedrock reached!")
+            returnToSurface(depth)
+            offloadItems()
+            break
+        end
+    end
+end
+
+-- Start
+turtle.select(fuelSlot)
+refuelFromChest()
+mineToBedrock()
