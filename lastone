@@ -1,0 +1,110 @@
+-- Bedrock Quarry Turtle (Full Version)
+
+local fuelSlot = 1
+local trash = {
+  ["minecraft:cobblestone"]=true,
+  ["minecraft:dirt"]=true,
+  ["minecraft:stone"]=true,
+  ["minecraft:gravel"]=true,
+  ["minecraft:granite"]=true,
+  ["minecraft:diorite"]=true,
+  ["create:gabbro"]=true,
+}
+
+write("Width? ") local width = tonumber(read())
+write("Length? ") local length = tonumber(read())
+
+local depth = 0
+
+-- Refuel with charcoal
+local function refuel()
+  if turtle.getFuelLevel() < 100 then
+    turtle.select(fuelSlot)
+    while turtle.getItemCount(fuelSlot) == 0 do
+      print("Insert charcoal in slot "..fuelSlot)
+      sleep(5)
+    end
+    turtle.refuel(1)
+  end
+end
+
+-- Auto-drop trash while mining
+local function handleInventory()
+  for i=2,16 do
+    local detail = turtle.getItemDetail(i)
+    if detail and trash[detail.name] then
+      turtle.select(i)
+      turtle.drop()
+    end
+  end
+end
+
+-- Deposit valuables to barrel behind start
+local function dumpValuables()
+  for i=2,16 do
+    local detail = turtle.getItemDetail(i)
+    if detail and not trash[detail.name] then
+      turtle.select(i)
+      turtle.turnLeft() turtle.turnLeft()
+      turtle.drop()
+      turtle.turnLeft() turtle.turnLeft()
+    end
+  end
+end
+
+local function goToChest()
+  for i=1,depth do turtle.up() end
+  dumpValuables()
+  for i=1,depth do turtle.down() end
+end
+
+local function isFull()
+  for i=2,16 do
+    if turtle.getItemCount(i) == 0 then return false end
+  end
+  return true
+end
+
+local function mineLayer()
+  for w=1,width do
+    for l=1,length-1 do
+      refuel()
+      while turtle.detect() do turtle.dig() end
+      turtle.forward()
+      handleInventory()
+      if isFull() then goToChest() end
+    end
+    if w < width then
+      if w%2==1 then turtle.turnRight() else turtle.turnLeft() end
+      while turtle.detect() do turtle.dig() end
+      turtle.forward()
+      if w%2==1 then turtle.turnRight() else turtle.turnLeft() end
+    end
+  end
+  for i=1,length-1 do turtle.back() end
+end
+
+-- Main loop: mine until bedrock
+while true do
+  mineLayer()
+  if not turtle.down() then
+    turtle.digDown()
+    if not turtle.down() then
+      print("Quarry complete! Returning to surface...")
+      
+      -- Climb back up to top
+      for i=1,depth do
+        while not turtle.up() do
+          turtle.digUp()
+        end
+      end
+
+      -- Deposit any remaining valuables
+      dumpValuables()
+      
+      print("Turtle has returned to surface and emptied its inventory. Job done!")
+      break
+    end
+  end
+  depth = depth + 1
+end
