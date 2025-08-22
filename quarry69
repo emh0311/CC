@@ -1,0 +1,126 @@
+-- Bedrock Quarry Turtle
+-- Fuel: Charcoal in slot 1
+-- Safe Blocks: in slot 2
+-- Barrel: Directly behind turtle
+
+-- CONFIG
+local fuelSlot = 1
+local placeableSlot = 2
+local trashBlocks = {
+    ["minecraft:cobblestone"] = true,
+    ["minecraft:dirt"] = true,
+    ["minecraft:stone"] = true,
+    ["minecraft:granite"] = true,
+    ["minecraft:diorite"] = true,
+    ["create:gabbro"] = true,
+    ["create:scoria"] = true
+}
+
+-- Ask size
+term.clear()
+term.setCursorPos(1,1)
+write("Enter quarry width: ")
+local W = tonumber(read())
+write("Enter quarry length: ")
+local L = tonumber(read())
+
+-- === Helpers ===
+local function refuelIfNeeded()
+    if turtle.getFuelLevel() < 100 then
+        turtle.select(fuelSlot)
+        turtle.refuel(1)
+    end
+end
+
+local function isTrash(name)
+    return trashBlocks[name] or false
+end
+
+local function dumpInventory()
+    print("Inventory full, returning to unload...")
+    -- Return home (assumes facing forward from start)
+    turtle.up()
+    while not turtle.detectDown() do
+        turtle.down()
+    end
+    -- Back to start
+    -- Simplest: use GPS movement tracking if needed, but here assume layer done
+    turtle.turnLeft()
+    turtle.turnLeft()
+    for i=3,16 do
+        turtle.select(i)
+        local item = turtle.getItemDetail()
+        if item and not (i == fuelSlot or i == placeableSlot) then
+            turtle.drop()
+        end
+    end
+    turtle.turnLeft()
+    turtle.turnLeft()
+    turtle.select(1)
+end
+
+local function checkInventory()
+    for i=3,16 do
+        if turtle.getItemCount(i) == 0 then
+            return false
+        end
+    end
+    return true
+end
+
+local function digDownColumn()
+    while turtle.down() do
+        refuelIfNeeded()
+        if turtle.detectDown() then turtle.digDown() end
+        local item = turtle.getItemDetail()
+        if item and isTrash(item.name) then
+            turtle.dropDown()
+        end
+        if checkInventory() then
+            dumpInventory()
+        end
+    end
+end
+
+local function mineLayer()
+    for x=1,W do
+        for y=1,L-1 do
+            refuelIfNeeded()
+            if turtle.detect() then turtle.dig() end
+            turtle.forward()
+            digDownColumn()
+            if checkInventory() then dumpInventory() end
+        end
+        if x < W then
+            if x % 2 == 1 then
+                turtle.turnRight()
+                if turtle.detect() then turtle.dig() end
+                turtle.forward()
+                turtle.turnRight()
+            else
+                turtle.turnLeft()
+                if turtle.detect() then turtle.dig() end
+                turtle.forward()
+                turtle.turnLeft()
+            end
+        end
+    end
+end
+
+-- === Main ===
+print("Starting quarry "..W.."x"..L)
+while turtle.down() do end -- Go to bedrock
+turtle.up()
+
+for h=1,256 do
+    mineLayer()
+    if turtle.detectDown() then
+        turtle.digDown()
+    end
+    if not turtle.down() then
+        break
+    end
+end
+
+dumpInventory()
+print("Quarry finished.")
