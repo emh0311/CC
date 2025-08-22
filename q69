@@ -1,0 +1,116 @@
+-- bedrock_miner_quarry.lua
+-- Bedrock Quarry Miner with Trash Dropping + Return System
+
+-- === CONFIG ===
+local fuelSlot = 1           -- Charcoal
+local safeBlockSlot = 2      -- For plugging lava
+local trashBlocks = {
+    ["minecraft:cobblestone"] = true,
+    ["minecraft:dirt"] = true,
+    ["minecraft:stone"] = true,
+    ["minecraft:diorite"] = true,
+    ["create:gabbro"] = true,
+}
+
+local barrelBehind = true -- Always dropoff barrel is behind starting point
+
+-- === HELPERS ===
+local function refuel()
+    if turtle.getFuelLevel() < 100 then
+        turtle.select(fuelSlot)
+        turtle.refuel(1)
+    end
+end
+
+local function isTrash(name)
+    return trashBlocks[name] == true
+end
+
+local function digAndCollect()
+    while turtle.detect() do
+        turtle.dig()
+        sleep(0.3)
+    end
+    turtle.suck()
+    for slot = 3, 16 do -- never touch fuel or safe blocks
+        local detail = turtle.getItemDetail(slot)
+        if detail and isTrash(detail.name) then
+            turtle.select(slot)
+            turtle.drop() -- drop trash immediately
+        end
+    end
+end
+
+local function dumpInventory()
+    print("Inventory full, returning to barrel...")
+    turtle.turnLeft()
+    turtle.turnLeft()
+    turtle.forward()
+    for slot = 3, 16 do
+        turtle.select(slot)
+        turtle.drop()
+    end
+    turtle.back()
+    turtle.turnLeft()
+    turtle.turnLeft()
+    print("Dump complete, resuming...")
+end
+
+local function checkInventory()
+    for slot = 3, 16 do
+        if turtle.getItemCount(slot) == 0 then
+            return false -- has space
+        end
+    end
+    return true -- full
+end
+
+-- === MAIN MINER ===
+print("Enter quarry width:")
+local width = tonumber(read())
+print("Enter quarry length:")
+local length = tonumber(read())
+
+print("Starting quarry of size "..width.."x"..length)
+
+local function quarryLayer()
+    for w = 1, width do
+        for l = 1, length - 1 do
+            digAndCollect()
+            refuel()
+            if checkInventory() then dumpInventory() end
+            turtle.forward()
+        end
+        -- move to next row unless last row
+        if w < width then
+            if w % 2 == 1 then
+                turtle.turnRight()
+                digAndCollect()
+                turtle.forward()
+                turtle.turnRight()
+            else
+                turtle.turnLeft()
+                digAndCollect()
+                turtle.forward()
+                turtle.turnLeft()
+            end
+        end
+    end
+    -- face original direction
+    if width % 2 == 1 then
+        turtle.turnLeft()
+    else
+        turtle.turnRight()
+    end
+end
+
+-- Dig layers until bedrock
+while true do
+    quarryLayer()
+    if not turtle.down() then
+        print("Reached bedrock or blocked, stopping.")
+        break
+    end
+end
+
+print("Quarry complete.")
