@@ -1,0 +1,79 @@
+-- Bedrock Quarry Turtle
+-- Place a barrel directly behind the turtle
+-- Fuel: charcoal in slot 1
+
+local fuelSlot = 1
+local trash = {
+  ["minecraft:cobblestone"]=true,
+  ["minecraft:dirt"]=true,
+  ["minecraft:stone"]=true,
+  ["minecraft:gravel"]=true,
+  ["minecraft:granite"]=true,
+  ["minecraft:diorite"]=true,
+  ["create:gabbro"]=true,
+}
+
+local width, length
+write("Width? ") width = tonumber(read())
+write("Length? ") length = tonumber(read())
+
+local function refuel()
+  if turtle.getFuelLevel() < 100 then
+    turtle.select(fuelSlot)
+    turtle.refuel(1)
+  end
+end
+
+local function dumpInventory()
+  for i=2,16 do
+    local detail = turtle.getItemDetail(i)
+    if detail and trash[detail.name] then
+      turtle.select(i) turtle.drop()
+    end
+  end
+end
+
+local function returnToBarrel()
+  turtle.turnLeft() turtle.turnLeft()
+  for i=2,16 do
+    turtle.select(i) turtle.drop()
+  end
+  turtle.turnLeft() turtle.turnLeft()
+end
+
+local function isFull()
+  for i=2,16 do
+    if turtle.getItemCount(i) == 0 then return false end
+  end
+  return true
+end
+
+local function mineLayer()
+  for w=1,width do
+    for l=1,length-1 do
+      refuel() dumpInventory()
+      while turtle.detect() do turtle.dig() end
+      turtle.forward()
+    end
+    if w < width then
+      if w%2==1 then turtle.turnRight() else turtle.turnLeft() end
+      while turtle.detect() do turtle.dig() end
+      turtle.forward()
+      if w%2==1 then turtle.turnRight() else turtle.turnLeft() end
+    end
+  end
+  for i=1,length-1 do
+    turtle.back()
+  end
+end
+
+while true do
+  mineLayer()
+  if isFull() then returnToBarrel() end
+  if not turtle.down() then
+    turtle.digDown()
+    if not turtle.down() then
+      print("Quarry complete.") break
+    end
+  end
+end
