@@ -1,0 +1,142 @@
+-- bedrock_miner_safe.lua (Charcoal-Only + Trash Drop + Auto-Return System)
+
+-- CONFIG
+local fuelSlot = 1           -- Slot reserved for charcoal
+local placeableSlot = 2      -- Slot reserved for safe blocks (lava plugging)
+local trashBlocks = {
+    ["minecraft:cobblestone"] = true,
+    ["minecraft:dirt"] = true,
+    ["minecraft:stone"] = true,
+    ["minecraft:diorite"] = true,
+    ["minecraft:granite"] = true,
+    ["create:gabbro"] = true,
+    ["create:limestone"] = true,
+    ["create:scoria"] = true,
+    ["create:weathered_limestone"] = true
+}
+
+-- State
+local minedDistance = 0 -- Track how many forward moves
+
+-- === Helpers ===
+
+local function isTrash(item)
+    return item and trashBlocks[item.name] or false
+end
+
+local function dropTrash()
+    for i = 3, 16 do -- Slots 1=fuel, 2=safety
+        local detail = turtle.getItemDetail(i)
+        if detail and isTrash(detail) then
+            turtle.select(i)
+            turtle.drop()
+        end
+    end
+    turtle.select(1)
+end
+
+local function refuel()
+    if turtle.getFuelLevel() < (minedDistance + 100) then
+        turtle.select(fuelSlot)
+        local detail = turtle.getItemDetail()
+        if detail and detail.name == "minecraft:charcoal" then
+            while turtle.getFuelLevel() < (minedDistance + 200) and turtle.getItemCount() > 0 do
+                turtle.refuel(1)
+            end
+            print("Refueled, fuel = " .. turtle.getFuelLevel())
+        else
+            print("WARNING: No charcoal in slot 1!")
+        end
+    end
+end
+
+local function safeDig(direction)
+    local success, data
+    if direction == "forward" then
+        success, data = turtle.inspect()
+        if success and data.name == "minecraft:lava" then
+            turtle.select(placeableSlot)
+            turtle.place()
+            return
+        end
+        turtle.dig()
+    elseif direction == "down" then
+        success, data = turtle.inspectDown()
+        if success and data.name == "minecraft:lava" then
+            turtle.select(placeableSlot)
+            turtle.placeDown()
+            return
+        end
+        turtle.digDown()
+    elseif direction == "up" then
+        success, data = turtle.inspectUp()
+        if success and data.name == "minecraft:lava" then
+            turtle.select(placeableSlot)
+            turtle.placeUp()
+            return
+        end
+        turtle.digUp()
+    end
+end
+
+local function goHome()
+    print("Returning to chest...")
+    for i = 1, minedDistance do
+        turtle.back()
+    end
+end
+
+local function goBackToMine()
+    print("Returning to mining spot...")
+    for i = 1, minedDistance do
+        turtle.forward()
+    end
+end
+
+local function dumpInventory()
+    turtle.turnLeft()
+    turtle.turnLeft()
+    for i = 3, 16 do
+        local detail = turtle.getItemDetail(i)
+        if detail then
+            turtle.select(i)
+            turtle.drop()
+        end
+    end
+    turtle.select(1)
+    turtle.turnLeft()
+    turtle.turnLeft()
+end
+
+local function inventoryFull()
+    for i = 3, 16 do
+        if turtle.getItemCount(i) == 0 then
+            return false
+        end
+    end
+    return true
+end
+
+-- === Main Loop ===
+print("Starting Bedrock Miner (Safe Mode, Charcoal + Return System)")
+
+while true do
+    refuel()
+    dropTrash()
+
+    if inventoryFull() then
+        goHome()
+        dumpInventory()
+        goBackToMine()
+    end
+
+    safeDig("forward")
+    if turtle.forward() then
+        minedDistance = minedDistance + 1
+        safeDig("up")
+        safeDig("down")
+    else
+        print("Blocked, trying again...")
+        sleep(1)
+    end
+end
